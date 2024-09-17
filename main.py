@@ -352,16 +352,19 @@ if __name__ == "__main__":
 
     # CLASSIFICATION AND METRICS
     if args.classify is not None and args.classify:
+        actual_labels = testloader.dataset[:][1]
+
         # Apply Gaussian Mixture Model
         # gmm = GaussianMixture(n_components=NUM_CLUSTER)
-        # km = KMeans(n_clusters=NUM_CLUSTER,random_state=42)
-        agg = AgglomerativeClustering(n_clusters=NUM_CLUSTER)
+        km = KMeans(n_clusters=NUM_CLUSTER,random_state=17,init='k-means++',n_init=20,algorithm='elkan')
+        # agg = AgglomerativeClustering(n_clusters=NUM_CLUSTER)
         # sc = SpectralClustering(n_components=NUM_CLUSTER)
         # bc = Birch(n_clusters=NUM_CLUSTER)
-        y_predette = agg.fit_predict(latent_rep)
+        # dbscan = DBSCAN(eps=0.5)
+        y_predette = bc.fit_predict(latent_rep)
 
         # confusion matrix
-        conf_matrix = confusion_matrix(testloader.dataset[:][1], y_predette)
+        conf_matrix = confusion_matrix(actual_labels, y_predette)
         # find optimal mapping with Hungarian algorithm
         row_ind, col_ind = linear_sum_assignment(-conf_matrix)
 
@@ -372,7 +375,7 @@ if __name__ == "__main__":
         y_predette_mapped = np.array([mapping[pred] for pred in y_predette])
 
         # confusion matrix after mapping
-        conf_matrix_mapped = confusion_matrix(testloader.dataset[:][1], y_predette_mapped)
+        conf_matrix_mapped = confusion_matrix(actual_labels, y_predette_mapped)
 
         plt.figure('Confusion Matrix',figsize=(8,8))
         sns.heatmap(conf_matrix_mapped, annot=True, fmt='d')
@@ -380,10 +383,10 @@ if __name__ == "__main__":
         plt.ylabel('True labels')
 
         # calculate F1 scores
-        f1_scores_macro = f1_score(testloader.dataset[:][1], y_predette_mapped, average='macro')
-        f1_scores_micro = f1_score(testloader.dataset[:][1], y_predette_mapped, average='micro')
-        f1_scores_weighted = f1_score(testloader.dataset[:][1], y_predette_mapped, average='weighted')
-        f1_scores = f1_score(testloader.dataset[:][1], y_predette_mapped, average=None)
+        f1_scores_macro = f1_score(actual_labels, y_predette_mapped, average='macro')
+        f1_scores_micro = f1_score(actual_labels, y_predette_mapped, average='micro')
+        f1_scores_weighted = f1_score(actual_labels, y_predette_mapped, average='weighted')
+        f1_scores = f1_score(actual_labels, y_predette_mapped, average=None)
 
 
         print(f"F1 scores: ({NUM_ELEMENTS} test-samples)")
