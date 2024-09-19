@@ -4,7 +4,7 @@ from vae import Autoencoder, train, test, get_latent, get_parameters, set_parame
 
 import hickle as hi
 
-from sklearn.mixture import GaussianMixture
+from sklearn.mixture import BayesianGaussianMixture
 from sklearn.manifold import TSNE
 from sklearn.cluster import AgglomerativeClustering, KMeans, DBSCAN, SpectralClustering, Birch
 from sklearn.decomposition import PCA
@@ -68,6 +68,18 @@ x_test = data['xtest']
 y_test = data['ytest']
 x_train = data['xtrain']
 y_train = data['ytrain']
+
+
+#“Normal”: 0,
+#"Goldeneye": 1,
+#"Slowloris": 2,          
+#“SYNflood": 3,
+#"SYNScan": 4,
+#"TCPConnect": 5,
+#"Torshammer": 6,   
+#"UDPflood": 7,
+#"UDPScan": 8
+
 
 trainsets = []
 valsets = []
@@ -205,7 +217,7 @@ client_resources = {"num_cpus": 1, "num_gpus": 0.0}
 
 # parsing function
 def parsing():
-    global NUM_EPOCHS, NUM_CLIENTS, NUM_ROUNDS, y_test, y_train, NUM_CLUSTER, NUM_ELEMENTS, SERVER_ID
+    global NUM_EPOCHS, NUM_CLIENTS, NUM_ROUNDS, y_test, y_train, NUM_CLUSTER, NUM_ELEMENTS, SERVER_ID, x_test, x_train
     parser = argparse.ArgumentParser(description="Processing inputs")
 
     parser.add_argument('--train', action='store_true', required=False, help='Train the model')
@@ -222,7 +234,8 @@ def parsing():
     parser.add_argument('--save', action='store_true', help='Save latent and labels')
     parser.add_argument('--normal', type=int, nargs='+', required=False, help='Array of labels to set as normal class (0)')
     parser.add_argument('--kl', type=float, required=False, help='KL divergence weight in training')
-    parser.add_argument('--test', action='store_true', help='Test the model and visualize outputs')  # Added this line
+    parser.add_argument('--test', action='store_true', help='Test the model and visualize outputs')
+    parser.add_argument('--attack', type=int, nargs='+', required=False, help='Simulate attack with only malicious packets of this type(s)')
 
     args = parser.parse_args()
 
@@ -248,6 +261,12 @@ def parsing():
                 continue
             y_test[y_test == label] = 0
             NUM_CLUSTER = NUM_CLUSTER - 1
+    if args.attack is not None:
+        args.attack.append(0)
+        indici = np.where(np.isin(y_test, args.attack))[0]
+        y_test = y_test[indici]
+        x_test = x_test[indici]
+        NUM_CLUSTER = len(args.attack)
 
     if args.clear:
         model = Autoencoder()
@@ -269,13 +288,13 @@ def plot_sets(tensors, recons):
     fig.subplots_adjust(hspace=0.5, wspace=0.5)
 
     i = 0
-    for tensor in tensors:
-        tensor = tensor[0]  # Assuming each tensor is wrapped in an extra dimension
+    for tensor,label in tensors:
         normalized_tensor = (tensor + 1) / 2
         numpy_tensor = normalized_tensor
 
         ax = axs[i // grid_size, i % grid_size]
         ax.imshow(numpy_tensor, cmap='gray', vmin=0, vmax=1)
+        ax.set_title(int(label.numpy()),fontsize=12)
         ax.axis('off')
         i += 1
         if i >= num_images:  # Stop if the number of images is less than expected
@@ -287,7 +306,6 @@ def plot_sets(tensors, recons):
 
     i = 0
     for recon in recons:
-        recon = recon[0]  # Assuming each recon is wrapped in an extra dimension
         normalized_recon = (recon + 1) / 2
         numpy_recon = normalized_recon
 
@@ -354,13 +372,13 @@ if __name__ == "__main__":
         actual_labels = testloader.dataset[:][1]
 
         # Apply Gaussian Mixture Model
-        # gmm = GaussianMixture(n_components=NUM_CLUSTER)
-        km = KMeans(n_clusters=NUM_CLUSTER,random_state=17,init='k-means++',n_init=20,algorithm='elkan')
+        gmm = BayesianGaussianMixture(n_components=NUM_CLUSTER)
+        # km = KMeans(n_clusters=NUM_CLUSTER,random_state=17,init='k-means++',n_init=20,algorithm='elkan')
         # agg = AgglomerativeClustering(n_clusters=NUM_CLUSTER)
         # sc = SpectralClustering(n_components=NUM_CLUSTER,eigen_solver='amg',affinity='sigmoid')
         # bc = Birch(n_clusters=NUM_CLUSTER)
         # dbscan = DBSCAN(eps=0.5)
-        y_predette = km.fit_predict(latent_rep)
+        y_predette = gmm.fit_predict(latent_rep)
 
         # confusion matrix
         conf_matrix = confusion_matrix(actual_labels, y_predette)
@@ -373,9 +391,11 @@ if __name__ == "__main__":
         # remap y_predette based on the optimal mapping
         y_predette_mapped = np.array([mapping[pred] for pred in y_predette])
 
+        #actual_labels[(actual_labels == 3) | (actual_labels == 4)] = 2
+        #y_predette_mapped[(y_predette_mapped == 3) | (y_predette_mapped == 4)] = 2
 
-        actual_labels[actual_labels != 7] = 0
-        y_predette_mapped[y_predette_mapped != 7] = 0
+        #actual_labels[actual_labels == 8] = 0
+        #y_predette_mapped[y_predette_mapped == 8] = 0
 
         '''
         unique_clusters = np.unique(y_predette)
@@ -430,10 +450,10 @@ if __name__ == "__main__":
 
     if args.tsne is not None and args.tsne:
 
-        #tsne = TSNE(n_components=2, random_state=42, method='exact')
-        #data_tsne = tsne.fit_transform(latent_rep)
-        pca = PCA(n_components=2)
-        data_tsne = pca.fit_transform(latent_rep)
+        tsne = TSNE(n_components=2, random_state=42, method='exact')
+        data_tsne = tsne.fit_transform(latent_rep)
+        #pca = PCA(n_components=2)
+        #data_tsne = pca.fit_transform(latent_rep)
 
 
         plt.figure('Predicted',figsize=(6, 6))

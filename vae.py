@@ -7,41 +7,34 @@ from typing import List, OrderedDict
 
 # definizione di una classe per la parte di autoencoding
 class Autoencoder(nn.Module):
-    def __init__(self, z_dim = 12):
+    def __init__(self, z_dim = 16):
         super(Autoencoder, self).__init__()
 
         self.z_dim = z_dim
 
         # Encoder
         self.encoder = nn.Sequential(
-            nn.Conv2d(1, 32, kernel_size=3, stride=1, padding=0),  
+            nn.Linear(100,512),
             nn.LeakyReLU(True),
-            nn.Conv2d(32, 64, kernel_size=3, stride=1, padding=0),  
+            nn.Linear(512,64),
             nn.LeakyReLU(True),
-            nn.Conv2d(64, 128, kernel_size=3, stride=1, padding=0),  
-            nn.LeakyReLU(True),
-            nn.Conv2d(128, 256, kernel_size=3, stride=1, padding=0),  
-            nn.LeakyReLU(True),
-            nn.Flatten(0),
+            nn.Linear(64,32),
             nn.LeakyReLU(True)
         )
 
-        self.fc_mu = nn.Linear(256*2*2, z_dim)
-        self.fc_log_var = nn.Linear(256*2*2, z_dim)
+        self.fc_mu = nn.Linear(32, z_dim)
+        self.fc_log_var = nn.Linear(32, z_dim)
         
         # Decoder
         self.decoder = nn.Sequential(
             nn.LeakyReLU(True),
-            nn.Linear(z_dim, 256 * 2 * 2),
-            nn.Unflatten(0,(256,2,2)),
+            nn.Linear(z_dim, 32),
             nn.LeakyReLU(True),
-            nn.ConvTranspose2d(256, 128, kernel_size=3, stride=1, padding=0),
+            nn.Linear(32,64),
             nn.LeakyReLU(True),
-            nn.ConvTranspose2d(128, 64, kernel_size=3, stride=1, padding=0),
+            nn.Linear(64,512),
             nn.LeakyReLU(True),
-            nn.ConvTranspose2d(64, 32, kernel_size=3, stride=1, padding=0),
-            nn.LeakyReLU(True),
-            nn.ConvTranspose2d(32, 1, kernel_size=3, stride=1, padding=0),
+            nn.Linear(512,100),
             nn.LeakyReLU(True)
         )
 
@@ -51,21 +44,27 @@ class Autoencoder(nn.Module):
         return mu + eps * std
 
     def forward(self, x):
+        x = x.view(100)
         encoded = self.encoder(x)
         mu = self.fc_mu(encoded)
         log_var = self.fc_log_var(encoded)
         z = self.reparameterize(mu, log_var)
-        return self.decoder(z), mu, log_var
+        y = self.decoder(z).view(10,10)
+        return y, mu, log_var
 
     # funzione che ritorna la rappresentazione di x nello spazio latente
     def latent(self, x):
+        x = x.view(100)
         encoded = self.encoder(x)
         mu = self.fc_mu(encoded)
         log_var = self.fc_log_var(encoded)
-        return self.reparameterize(mu,log_var)
+        z = self.reparameterize(mu,log_var)
+        return z
 
 
 def vae_loss(recon_x, x, mu, log_var, KL_WEIGHT):
+    x = x.squeeze(0)  # Remove the extra dimension
+
     # Reconstruction loss
     recon_loss = F.mse_loss(recon_x,x, reduction='mean')
 
@@ -81,7 +80,7 @@ def vae_loss(recon_x, x, mu, log_var, KL_WEIGHT):
 
 
 def train(model, train_loader, num_epochs, device):
-    optimizer = torch.optim.Adam(model.parameters(), lr=0.0001) # lower learning rate
+    optimizer = torch.optim.Adam(model.parameters(), lr=1e-4, weight_decay=1e-6,) # lower learning rate
     model.train()  # Set the model to training mode
 
     for epochs in range(num_epochs):
@@ -89,7 +88,7 @@ def train(model, train_loader, num_epochs, device):
         mean_loss = 0
         kl_loss = 0
 
-        KL_WEIGHT = epochs / (num_epochs * 64 * 64)
+        KL_WEIGHT = epochs / (num_epochs * 12 * 12)
 
         for batch_idx, (data, _) in enumerate(train_loader):
             data = data.to(device)

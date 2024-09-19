@@ -355,13 +355,13 @@ if __name__ == "__main__":
         actual_labels = testloader.dataset[:][1]
 
         # Apply Gaussian Mixture Model
-        # gmm = GaussianMixture(n_components=NUM_CLUSTER)
-        km = KMeans(n_clusters=NUM_CLUSTER,random_state=17,init='k-means++',n_init=20,algorithm='elkan')
+        gmm = GaussianMixture(n_components=NUM_CLUSTER)
+        #km = KMeans(n_clusters=NUM_CLUSTER,random_state=17,init='k-means++',n_init=20,algorithm='elkan')
         # agg = AgglomerativeClustering(n_clusters=NUM_CLUSTER)
         # sc = SpectralClustering(n_components=NUM_CLUSTER)
         # bc = Birch(n_clusters=NUM_CLUSTER)
         # dbscan = DBSCAN(eps=0.5)
-        y_predette = bc.fit_predict(latent_rep)
+        y_predette = gmm.fit_predict(latent_rep)
 
         # confusion matrix
         conf_matrix = confusion_matrix(actual_labels, y_predette)
