@@ -1,13 +1,14 @@
 import argparse
 
-from autoencoder import Autoencoder, train, test, get_latent, get_parameters, set_parameters, predict
+from vae import Autoencoder, train, test, get_latent, get_parameters, set_parameters, predict, model_init, KL_WEIGHT
 
 import hickle as hi
 
-from sklearn.mixture import GaussianMixture
+from sklearn.mixture import BayesianGaussianMixture
 from sklearn.manifold import TSNE
 from sklearn.cluster import AgglomerativeClustering, KMeans, DBSCAN, SpectralClustering, Birch
 from sklearn.decomposition import PCA
+
 
 
 import matplotlib.pyplot as plt
@@ -20,10 +21,9 @@ from datasets.utils.logging import disable_progress_bar
 from torch.utils.data import DataLoader, TensorDataset, random_split, IterableDataset, Dataset, ConcatDataset
 
 import flwr as fl
-from flwr.common import Parameters, Scalar, FitRes
+from flwr.common import Parameters, Scalar, FitRes, Context
 from flwr.server.client_proxy import ClientProxy
 from flwr.server.strategy import FedAvg
-from flwr.simulation import run_simulation
 
 
 from typing import Dict, List, Optional, Tuple, Union, OrderedDict
@@ -34,7 +34,8 @@ from flwr_datasets.partitioner import IidPartitioner
 # libraries for metrics
 from sklearn.metrics import f1_score, confusion_matrix, pairwise_distances
 from scipy.optimize import linear_sum_assignment
-from sklearn.preprocessing import RobustScaler
+from sklearn.preprocessing import StandardScaler, RobustScaler
+from scipy.stats import mode
 
 # confusion matrix
 import seaborn as sns
@@ -46,8 +47,6 @@ tensor_transforms = transforms.Compose([
     transforms.RandomAffine(degrees=0, translate=(0.2, 0.2)),  
     transforms.RandomHorizontalFlip(),  
 ])
-
-
 
 DEVICE = torch.device("mps")
 disable_progress_bar()
@@ -68,9 +67,16 @@ y_test = data['ytest']
 x_train = data['xtrain']
 y_train = data['ytrain']
 
-indici = y_train == 0
-x_train = x_train[indici]
-y_train = y_train[indici]
+#“Normal”: 0,
+#"Goldeneye": 1,
+#"Slowloris": 2,          
+#“SYNflood": 3,
+#"SYNScan": 4,
+#"TCPConnect": 5,
+#"Torshammer": 6,   
+#"UDPflood": 7,
+#"UDPScan": 8
+
 
 trainsets = []
 valsets = []
@@ -144,15 +150,15 @@ class FlowerClient(fl.client.NumPyClient):
         return float(loss), len(self.valloader), {"accuracy": float(accuracy)}
     
 # Client function
-def client_fn(cid: str) -> FlowerClient:
+def client_fn(context: Context) -> FlowerClient:
 
     # Load model
     model = Autoencoder()
-    model.load_state_dict(torch.load('data/model.pth'))
+    model.load_state_dict(torch.load('data/vae.pth',weights_only=True))
     net = model.to(DEVICE)
     
     # Load data
-    partition_id = int(cid)
+    partition_id = int(context.node_config["partition-id"])
     trainloader, valloader, _ = load_datasets(partition_id=partition_id)
 
     for data in trainloader:
@@ -188,7 +194,7 @@ class SaveModelStrategy(fl.server.strategy.FedAvg):
             net.load_state_dict(state_dict, strict=True)
 
             # Save the model
-            torch.save(net.state_dict(), "data/model.pth")
+            torch.save(net.state_dict(), "data/vae.pth")
 
         return aggregated_parameters, aggregated_metrics
 
@@ -208,7 +214,7 @@ client_resources = {"num_cpus": 1, "num_gpus": 0.0}
 
 # parsing function
 def parsing():
-    global NUM_EPOCHS, NUM_CLIENTS, NUM_ROUNDS, y_test, y_train, NUM_CLUSTER, NUM_ELEMENTS, SERVER_ID
+    global NUM_EPOCHS, NUM_CLIENTS, NUM_ROUNDS, y_test, y_train, NUM_CLUSTER, NUM_ELEMENTS, SERVER_ID, x_test, x_train, KL_WEIGHT
     parser = argparse.ArgumentParser(description="Processing inputs")
 
     parser.add_argument('--train', action='store_true', required=False, help='Train the model')
@@ -224,6 +230,9 @@ def parsing():
     parser.add_argument('--server', type=int, required=False, help='Server partition ID')
     parser.add_argument('--save', action='store_true', help='Save latent and labels')
     parser.add_argument('--normal', type=int, nargs='+', required=False, help='Array of labels to set as normal class (0)')
+    parser.add_argument('--kl', type=float, required=False, help='KL divergence weight in training')
+    parser.add_argument('--test', action='store_true', help='Test the model and visualize outputs')
+    parser.add_argument('--attack', type=int, nargs='+', required=False, help='Simulate attack with only malicious packets of this type(s)')
 
     args = parser.parse_args()
 
@@ -249,10 +258,20 @@ def parsing():
                 continue
             y_test[y_test == label] = 0
             NUM_CLUSTER = NUM_CLUSTER - 1
+    if args.attack is not None:
+        args.attack.append(0)
+        indici = np.where(np.isin(y_test, args.attack))[0]
+        y_test = y_test[indici]
+        x_test = x_test[indici]
+        NUM_CLUSTER = len(args.attack)
 
     if args.clear:
         model = Autoencoder()
-        torch.save(model.state_dict(), 'data/model.pth')
+        model_init(model)
+        torch.save(model.state_dict(), 'data/vae.pth')
+
+    if args.kl is not None:
+        KL_WEIGHT = args.kl
 
     return args
 
@@ -266,25 +285,25 @@ def plot_sets(tensors, recons):
     fig.subplots_adjust(hspace=0.5, wspace=0.5)
 
     i = 0
-    for tensor in tensors:
-        tensor = tensor[0]  # Assuming each tensor is wrapped in an extra dimension
+    for tensor,label in tensors:
         normalized_tensor = (tensor + 1) / 2
         numpy_tensor = normalized_tensor
 
         ax = axs[i // grid_size, i % grid_size]
         ax.imshow(numpy_tensor, cmap='gray', vmin=0, vmax=1)
+        #ax.set_title(int(label.numpy()),fontsize=12)
         ax.axis('off')
         i += 1
         if i >= num_images:  # Stop if the number of images is less than expected
             break
 
     # Second plot for reconstructed images
+    #fig.savefig('originals.png', dpi=300, bbox_inches='tight')
     fig, axs = plt.subplots(num_rows, grid_size, figsize=(grid_size, num_rows))
     fig.subplots_adjust(hspace=0.5, wspace=0.5)
 
     i = 0
     for recon in recons:
-        recon = recon[0]  # Assuming each recon is wrapped in an extra dimension
         normalized_recon = (recon + 1) / 2
         numpy_recon = normalized_recon
 
@@ -295,10 +314,11 @@ def plot_sets(tensors, recons):
         if i >= num_images:
             break
 
+    
+    #fig.savefig('reconstructed.png', dpi=300, bbox_inches='tight')
+
+
     plt.show()
-
-
-
 
 if __name__ == "__main__":
 
@@ -311,6 +331,14 @@ if __name__ == "__main__":
     # define model
     model = Autoencoder()
 
+    # load model
+    try:
+        model.load_state_dict(torch.load('data/vae.pth', weights_only=True))
+        net = model.to(DEVICE)
+    except:
+        print("Unable to load model - exiting")
+        exit(1)
+    
     # train model
     if args.train is not None and args.train:
 
@@ -323,25 +351,18 @@ if __name__ == "__main__":
             client_resources=client_resources,
         )
 
-    # load model
-    try:
-        model.load_state_dict(torch.load('data/model.pth'))
-        net = model.to(DEVICE)
-    except:
-        print("Unable to load model - exiting")
-        exit(1)
-
-
     # load data
     trainloader, valloader, testloader = load_datasets(partition_id=SERVER_ID)
 
     # Get latent representation of inputs
     latent_rep = get_latent(net, testloader, DEVICE)
     recon_rep = predict(net, testloader, DEVICE)
-    
-    # normalize data
-    scaler = RobustScaler()
-    latent_rep = scaler.fit_transform(latent_rep)
+
+
+    #min max scaler
+
+    rc = StandardScaler()
+    latent_rep = rc.fit_transform(latent_rep)
 
     if args.save is not None and args.save:
         y = testloader.dataset[:][1].numpy()
@@ -352,33 +373,46 @@ if __name__ == "__main__":
 
     # CLASSIFICATION AND METRICS
     if args.classify is not None and args.classify:
+        
         actual_labels = testloader.dataset[:][1]
 
         # Apply Gaussian Mixture Model
-        gmm = GaussianMixture(n_components=NUM_CLUSTER)
-        #km = KMeans(n_clusters=NUM_CLUSTER,random_state=17,init='k-means++',n_init=20,algorithm='elkan')
+        gmm = BayesianGaussianMixture(n_components=NUM_CLUSTER)
+        # km = KMeans(n_clusters=NUM_CLUSTER,random_state=17,init='k-means++',n_init=20,algorithm='elkan')
         # agg = AgglomerativeClustering(n_clusters=NUM_CLUSTER)
-        # sc = SpectralClustering(n_components=NUM_CLUSTER)
+        #sc = SpectralClustering(n_components=4, n_clusters=NUM_CLUSTER)
+
         # bc = Birch(n_clusters=NUM_CLUSTER)
         # dbscan = DBSCAN(eps=0.5)
         y_predette = gmm.fit_predict(latent_rep)
 
-        # confusion matrix
-        conf_matrix = confusion_matrix(actual_labels, y_predette)
-        # find optimal mapping with Hungarian algorithm
+        # Define the labels to ensure a 10x10 confusion matrix
+        labels = np.arange(10)
+
+        # Confusion matrix
+        conf_matrix = confusion_matrix(actual_labels, y_predette, labels=labels)
+
+        # Find optimal mapping with Hungarian algorithm
         row_ind, col_ind = linear_sum_assignment(-conf_matrix)
 
-        # create mapping between predicted clusters and true labels
+        # Create mapping between predicted clusters and true labels
         mapping = {col: row for row, col in zip(row_ind, col_ind)}
 
-        # remap y_predette based on the optimal mapping
-        y_predette_mapped = np.array([mapping[pred] for pred in y_predette])
+        # Remap y_predette based on the optimal mapping
+        y_predette_mapped = np.array([mapping.get(pred, pred) for pred in y_predette])
 
-        # confusion matrix after mapping
-        conf_matrix_mapped = confusion_matrix(actual_labels, y_predette_mapped)
 
-        plt.figure('Confusion Matrix',figsize=(8,8))
-        sns.heatmap(conf_matrix_mapped, annot=True, fmt='d')
+        y_predette_mapped[y_predette_mapped != 7] = 0
+        actual_labels[actual_labels != 7] = 0
+
+        # Confusion matrix after mapping
+        conf_matrix_mapped = confusion_matrix(actual_labels, y_predette_mapped, labels=labels)
+
+        # Normalize confusion matrix
+        cmn = conf_matrix_mapped
+
+        plt.figure('Confusion Matrix',figsize=(10,10))
+        sns.heatmap(cmn, annot=True, fmt='.2f')
         plt.xlabel('Predicted labels')
         plt.ylabel('True labels')
 
@@ -404,14 +438,14 @@ if __name__ == "__main__":
 
     if args.tsne is not None and args.tsne:
 
-        #tsne = TSNE(n_components=2, random_state=42, method='exact')
-        #data_tsne = tsne.fit_transform(latent_rep)
-        pca = PCA(n_components=2)
-        data_tsne = pca.fit_transform(latent_rep)
+        tsne = TSNE(n_components=2, random_state=42)
+        data_tsne = tsne.fit_transform(latent_rep)
+        #pca = PCA(n_components=2)
+        #data_tsne = pca.fit_transform(latent_rep)
 
 
         plt.figure('Predicted',figsize=(6, 6))
-        scatter = plt.scatter(data_tsne[:, 0], data_tsne[:, 1], c=y_predette_mapped,cmap='winter' ,s=50, alpha=0.7)
+        scatter = plt.scatter(data_tsne[:, 0], data_tsne[:, 1], c=y_predette_mapped,cmap='cividis' ,s=50, alpha=0.7)
         plt.colorbar(scatter, label='Cluster')
         plt.title("Predicted")
         plt.xlabel("x")
@@ -420,7 +454,7 @@ if __name__ == "__main__":
 
 
         plt.figure('Actual',figsize=(6, 6))
-        scatter = plt.scatter(data_tsne[:, 0], data_tsne[:, 1], c=testloader.dataset[:][1], cmap='winter' ,s=50, alpha=0.7)
+        scatter = plt.scatter(data_tsne[:, 0], data_tsne[:, 1], c=actual_labels, cmap='cividis' ,s=50, alpha=0.7)
         plt.colorbar(scatter, label='Cluster')
         plt.title("Actual")
         plt.xlabel("x")

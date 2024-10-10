@@ -1,0 +1,15 @@
+argparse
+hickle
+scikit-learn
+matplotlib
+numpy
+torch
+datasets
+flwr
+seaborn
+torchvision
+scipy
+flwr-datasets
+flwr[simulation]
+ray
+pyamg

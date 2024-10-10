@@ -1,1 +1,7 @@
 data/
+.venv/
+__pycache__/
+ex_main.py
+appunti.py
+autoencoder.py
+
