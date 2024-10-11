@@ -48,7 +48,7 @@ tensor_transforms = transforms.Compose([
     transforms.RandomHorizontalFlip(),  
 ])
 
-DEVICE = torch.device("mps")
+DEVICE = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 disable_progress_bar()
 
 # Global parameters
@@ -377,7 +377,7 @@ if __name__ == "__main__":
         actual_labels = testloader.dataset[:][1]
 
         # Apply Gaussian Mixture Model
-        gmm = BayesianGaussianMixture(n_components=NUM_CLUSTER)
+        gmm = BayesianGaussianMixture(n_components=NUM_CLUSTER, random_state=0)
         # km = KMeans(n_clusters=NUM_CLUSTER,random_state=17,init='k-means++',n_init=20,algorithm='elkan')
         # agg = AgglomerativeClustering(n_clusters=NUM_CLUSTER)
         #sc = SpectralClustering(n_components=4, n_clusters=NUM_CLUSTER)
@@ -438,10 +438,10 @@ if __name__ == "__main__":
 
     if args.tsne is not None and args.tsne:
 
-        tsne = TSNE(n_components=2, random_state=42)
-        data_tsne = tsne.fit_transform(latent_rep)
-        #pca = PCA(n_components=2)
-        #data_tsne = pca.fit_transform(latent_rep)
+        #tsne = TSNE(n_components=2, random_state=42)
+        #data_tsne = tsne.fit_transform(latent_rep)
+        pca = PCA(n_components=2)
+        data_tsne = pca.fit_transform(latent_rep)
 
 
         plt.figure('Predicted',figsize=(6, 6))
@@ -464,8 +464,11 @@ if __name__ == "__main__":
     if args.plot:
         plot_sets(testloader.dataset, recon_rep)
 
-
-    plt.show()
+    # save figures
+    for i in plt.get_fignums():
+        plt.figure(i)
+        plt.savefig(f'output/figure_{i}.png')
+        plt.close(i)  # Close each figure to free memory
 
     
 
