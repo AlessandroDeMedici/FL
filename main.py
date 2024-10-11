@@ -401,15 +401,17 @@ if __name__ == "__main__":
         # Remap y_predette based on the optimal mapping
         y_predette_mapped = np.array([mapping.get(pred, pred) for pred in y_predette])
 
-
+        # binary classification
         y_predette_mapped[y_predette_mapped != 7] = 0
         actual_labels[actual_labels != 7] = 0
+        y_predette_mapped[y_predette_mapped == 7] = 1
+        actual_labels[actual_labels == 7] = 1
 
-        # Confusion matrix after mapping
-        conf_matrix_mapped = confusion_matrix(actual_labels, y_predette_mapped, labels=labels)
+        # Matrice di confusione dopo il mapping
+        conf_matrix_mapped = confusion_matrix(actual_labels, y_predette_mapped, labels=[0, 1])
 
-        # Normalize confusion matrix
-        cmn = conf_matrix_mapped
+        # Normalizza la matrice di confusione per ottenere percentuali
+        cmn = conf_matrix_mapped.astype('float') / conf_matrix_mapped.sum(axis=1)[:, np.newaxis]
 
         plt.figure('Confusion Matrix',figsize=(10,10))
         sns.heatmap(cmn, annot=True, fmt='.2f')
