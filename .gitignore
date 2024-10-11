@@ -1,4 +1,4 @@
-data/
+data/data.hkl
 .venv/
 __pycache__/
 ex_main.py
