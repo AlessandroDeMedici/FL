@@ -112,7 +112,7 @@ def vae_loss(recon_x, x, mu, log_var, KL_WEIGHT, training=True):
         contractive_loss = 0
 
     # Loss totale
-    total_loss = recon_loss + KL_WEIGHT * kl_div + contractive_loss
+    total_loss = recon_loss #+KL_WEIGHT * kl_div + contractive_loss
 
     return total_loss, recon_loss, kl_div
 

@@ -67,6 +67,10 @@ y_test = data['ytest']
 x_train = data['xtrain']
 y_train = data['ytrain']
 
+# only class 0 packets
+x_train = x_train[y_train == 0]
+y_train = y_train[y_train == 0]
+
 #“Normal”: 0,
 #"Goldeneye": 1,
 #"Slowloris": 2,          
@@ -210,7 +214,7 @@ strategy = SaveModelStrategy(
 
 
 # define client resources
-client_resources = {"num_cpus": 1, "num_gpus": 0.0}
+client_resources = {"num_cpus": 1, "num_gpus": 1}
 
 # parsing function
 def parsing():
@@ -257,7 +261,7 @@ def parsing():
             if label < 0 or label > 9:
                 continue
             y_test[y_test == label] = 0
-            NUM_CLUSTER = NUM_CLUSTER - 1
+            # NUM_CLUSTER = NUM_CLUSTER - 1
     if args.attack is not None:
         args.attack.append(0)
         indici = np.where(np.isin(y_test, args.attack))[0]
@@ -358,11 +362,9 @@ if __name__ == "__main__":
     latent_rep = get_latent(net, testloader, DEVICE)
     recon_rep = predict(net, testloader, DEVICE)
 
-
     #min max scaler
-
-    rc = StandardScaler()
-    latent_rep = rc.fit_transform(latent_rep)
+    # rc = StandardScaler()
+    # latent_rep = rc.fit_transform(latent_rep)
 
     if args.save is not None and args.save:
         y = testloader.dataset[:][1].numpy()
@@ -377,7 +379,7 @@ if __name__ == "__main__":
         actual_labels = testloader.dataset[:][1]
 
         # Apply Gaussian Mixture Model
-        gmm = BayesianGaussianMixture(n_components=NUM_CLUSTER, random_state=0)
+        gmm = BayesianGaussianMixture(n_components=NUM_CLUSTER, random_state=42)
         # km = KMeans(n_clusters=NUM_CLUSTER,random_state=17,init='k-means++',n_init=20,algorithm='elkan')
         # agg = AgglomerativeClustering(n_clusters=NUM_CLUSTER)
         #sc = SpectralClustering(n_components=4, n_clusters=NUM_CLUSTER)
@@ -402,8 +404,8 @@ if __name__ == "__main__":
         y_predette_mapped = np.array([mapping.get(pred, pred) for pred in y_predette])
 
         # binary classification
-        y_predette_mapped[y_predette_mapped != 7] = 0
-        actual_labels[actual_labels != 7] = 0
+        y_predette_mapped[y_predette_mapped != 0] = 1
+        actual_labels[actual_labels != 0] = 1
         y_predette_mapped[y_predette_mapped == 7] = 1
         actual_labels[actual_labels == 7] = 1
 
@@ -440,10 +442,10 @@ if __name__ == "__main__":
 
     if args.tsne is not None and args.tsne:
 
-        #tsne = TSNE(n_components=2, random_state=42)
-        #data_tsne = tsne.fit_transform(latent_rep)
-        pca = PCA(n_components=2)
-        data_tsne = pca.fit_transform(latent_rep)
+        tsne = TSNE(n_components=2, random_state=42)
+        data_tsne = tsne.fit_transform(latent_rep)
+        # pca = PCA(n_components=2)
+        # data_tsne = pca.fit_transform(latent_rep)
 
 
         plt.figure('Predicted',figsize=(6, 6))
